@@ -37,8 +37,6 @@ ENV/
 Thumbs.db
 
 # Project specific
-models/
-results/
 *.log
 *.png
 .ipynb_checkpoints/
