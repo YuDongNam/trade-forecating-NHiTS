@@ -141,7 +141,11 @@ python -m src.pipeline.train
 
 Evaluate models and generate metrics/plots:
 ```bash
+# Default: Evaluate on last 24 months
 python -m src.pipeline.evaluate
+
+# 2024 Validation: Train on 2023 data, predict 2024
+python -m src.pipeline.evaluate 2024
 ```
 
 ### Generate Forecasts

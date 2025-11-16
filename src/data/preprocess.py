@@ -30,6 +30,31 @@ def train_val_split(
     return train_df, val_df
 
 
+def train_val_split_by_date(
+    df: pd.DataFrame,
+    train_end_date: str = "2023-12-01"
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split data into train and validation sets by date.
+    
+    Args:
+        df: Full dataset with "ds" column
+        train_end_date: Last date for training data (format: "YYYY-MM-DD")
+    
+    Returns:
+        train_df, val_df
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    df["ds"] = pd.to_datetime(df["ds"])
+    
+    train_end = pd.to_datetime(train_end_date)
+    
+    train_df = df[df["ds"] <= train_end].copy()
+    val_df = df[df["ds"] > train_end].copy()
+    
+    return train_df, val_df
+
+
 def scale_columns(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
