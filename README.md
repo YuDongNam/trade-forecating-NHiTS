@@ -86,6 +86,8 @@ The model incorporates the following exogenous variables:
 
 ## Installation
 
+### Local Installation
+
 1. Clone the repository:
 ```bash
 git clone <repository-url>
@@ -96,6 +98,35 @@ cd NHiTS
 ```bash
 pip install -r requirements.txt
 ```
+
+### Google Colab Installation
+
+Colab에서 실행하려면 `colab_setup.ipynb` 노트북을 사용하거나 `COLAB_GUIDE.md`를 참고하세요.
+
+**빠른 시작:**
+1. Colab에서 새 노트북 생성
+2. `colab_setup.ipynb` 업로드 또는 아래 코드 실행:
+```python
+# 디렉토리 생성
+import os
+os.makedirs("data", exist_ok=True)
+os.makedirs("src/config", exist_ok=True)
+os.makedirs("src/data", exist_ok=True)
+os.makedirs("src/model", exist_ok=True)
+os.makedirs("src/pipeline", exist_ok=True)
+
+# 패키지 설치
+!pip install neuralforecast torch pandas numpy scikit-learn matplotlib pydantic tqdm
+
+# 파일 업로드 (Colab 파일 메뉴 사용)
+# - src/ 폴더 전체
+# - data/ 폴더의 모든 CSV 파일
+
+# 실행
+!python -m src.pipeline.run_all
+```
+
+자세한 내용은 `COLAB_GUIDE.md`를 참고하세요.
 
 ## Usage
 
