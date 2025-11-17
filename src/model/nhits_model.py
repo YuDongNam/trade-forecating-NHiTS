@@ -2,13 +2,14 @@ from neuralforecast.models import NHITS
 from ..config.yaml_loader import TrainConfig
 
 
-def create_nhits(config: TrainConfig, exog_dim: int = 0) -> NHITS:
+def create_nhits(config: TrainConfig, exog_dim: int = 0, prediction_intervals: bool = True) -> NHITS:
     """
     Create and configure an NHITS model.
     
     Args:
         config: Training configuration
         exog_dim: Number of exogenous variables (optional, auto-detected from data)
+        prediction_intervals: Whether to enable prediction intervals (for level/quantiles in predict)
     
     Returns:
         Configured NHITS model
@@ -23,6 +24,10 @@ def create_nhits(config: TrainConfig, exog_dim: int = 0) -> NHITS:
         "batch_size": config.batch_size,
         "learning_rate": config.lr,
     }
+    
+    # Enable prediction intervals to use level/quantiles during predict
+    if prediction_intervals:
+        model_kwargs["prediction_intervals"] = True
     
     # Only add n_x if exog_dim > 0 and the version supports it
     # For now, let neuralforecast auto-detect from data

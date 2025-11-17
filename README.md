@@ -256,8 +256,22 @@ run(config_dir="config", val_mode="range", val_start="2023-01-01", val_end="2023
 - **Full-Period R²**: `results/{target}_full_r2.json` - R² computed over entire training period
 - **Forecasts**: `results/{target}_forecast.csv` - Contains historical data and future forecasts with confidence intervals
 - **Validation Details**: `results/{target}_validation.csv` - Detailed validation results with errors
-- **Plots**: `results/{target}_forecast.png` - Visualization of actual vs forecasted values with 95% confidence intervals
+- **Plots**: `results/{target}_forecast.png` - Visualization of actual vs forecasted values with 95% confidence intervals (automatically generated during evaluation)
 - **Summary**: `results/summary_metrics.json` - Aggregated metrics for all targets
+
+### Plotting
+
+Plots are automatically generated during evaluation. To create custom plots:
+
+```bash
+# Plot all targets
+python plot_results.py
+
+# Plot specific target with full period
+python plot_results.py --target Korea_Import --full_period
+```
+
+See `PLOTTING_GUIDE.md` for detailed plotting options.
 
 ### Metrics Explained
 

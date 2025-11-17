@@ -87,8 +87,9 @@ def evaluate_target(
     # 5) Create and fit model (or load if available)
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    nhits_model = create_nhits(train_config, exog_dim)
-    nf = NeuralForecast(models=[nhits_model], freq="M")
+    # Enable prediction_intervals to use level/quantiles during predict
+    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
+    nf = NeuralForecast(models=[nhits_model], freq="ME")  # Use 'ME' instead of deprecated 'M'
     
     print("Fitting model on training data...")
     nf.fit(df=train_nf, val_size=0)

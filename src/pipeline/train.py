@@ -89,12 +89,13 @@ def train_target(
     # 5) Create NHITS model
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    nhits_model = create_nhits(train_config, exog_dim)
+    # Enable prediction_intervals to use level/quantiles during predict
+    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
     
     # 6) Initialize NeuralForecast
     nf = NeuralForecast(
         models=[nhits_model],
-        freq="M"  # Monthly frequency
+        freq="ME"  # Monthly frequency (ME instead of deprecated M)
     )
     
     # 7) Fit model

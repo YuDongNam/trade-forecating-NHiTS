@@ -20,6 +20,7 @@ from ..data import load_target_df
 from ..data.feature_engineering import drop_unused_fx_columns
 from ..data.preprocess import scale_columns
 from ..model import create_nhits
+from .plotting import plot_forecast
 
 
 def forecast_target(
@@ -74,8 +75,9 @@ def forecast_target(
     # 4) Create and fit model
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    nhits_model = create_nhits(train_config, exog_dim)
-    nf = NeuralForecast(models=[nhits_model], freq="M")
+    # Enable prediction_intervals to use level/quantiles during predict
+    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
+    nf = NeuralForecast(models=[nhits_model], freq="ME")  # Use 'ME' instead of deprecated 'M'
     
     print("Fitting model on full history...")
     nf.fit(df=full_nf, val_size=0)
@@ -138,6 +140,39 @@ def forecast_target(
     forecast_path = result_dir / f"{target}_forecast.csv"
     result_df.to_csv(forecast_path, index=False)
     print(f"Forecast saved to: {forecast_path}")
+    
+    # 9) Generate plot for forecast
+    print("Generating forecast plot...")
+    # Combine historical and forecast data for plotting
+    historical_dates = pd.Series(df["ds"].values)
+    historical_values = pd.Series(df["y"].values)
+    forecast_dates = pd.Series(future_dates)
+    forecast_values = pd.Series(forecast_inverse)
+    
+    # Combine for plotting
+    all_dates = pd.concat([historical_dates, forecast_dates], ignore_index=True)
+    all_actual = pd.concat([historical_values, pd.Series([np.nan] * len(forecast_dates))], ignore_index=True)
+    all_forecast = pd.concat([pd.Series([np.nan] * len(historical_dates)), forecast_values], ignore_index=True)
+    
+    forecast_lower_series = None
+    forecast_upper_series = None
+    if forecast_lower_inverse is not None and forecast_upper_inverse is not None:
+        forecast_lower_series = pd.concat([pd.Series([np.nan] * len(historical_dates)), pd.Series(forecast_lower_inverse)], ignore_index=True)
+        forecast_upper_series = pd.concat([pd.Series([np.nan] * len(historical_dates)), pd.Series(forecast_upper_inverse)], ignore_index=True)
+    
+    plot_path = result_dir / f"{target}_future_forecast.png"
+    plot_forecast(
+        dates=all_dates,
+        y_actual=all_actual,
+        y_pred=all_forecast,
+        y_lower=forecast_lower_series,
+        y_upper=forecast_upper_series,
+        title=f"{target} - Future Forecast",
+        metrics_text=f"Forecast horizon: {train_config.horizon} months",
+        save_path=plot_path,
+        show=False
+    )
+    print(f"Forecast plot saved to: {plot_path}")
     
     # Print forecast summary
     print("\nForecast Summary:")
