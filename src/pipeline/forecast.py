@@ -156,7 +156,8 @@ def main():
         help="Directory containing YAML config files"
     )
     
-    args = parser.parse_args()
+    # Use parse_known_args to ignore Jupyter/Colab kernel arguments
+    args, unknown = parser.parse_known_args()
     config_dir = Path(args.config_dir)
     
     # Load configurations

@@ -51,20 +51,18 @@ from src.pipeline.forecast import main as forecast_main
 forecast_main()
 ```
 
-### 3. Colab 노트북에서 사용 (tqdm 출력 개선)
+### 3. Colab 노트북에서 사용 (tqdm 출력 개선, 권장)
 
 ```python
 # tqdm notebook 모드로 설정 (Colab에서 더 깔끔하게 보임)
 from tqdm.notebook import tqdm
-import tqdm.notebook as tqdm_notebook
 
-# 파이프라인 실행
+# 방법 A: run_pipeline.py 사용 (Jupyter 커널 인자 문제 해결)
+from run_pipeline import run
+run()
+
+# 방법 B: 직접 import (parse_known_args로 Jupyter 인자 무시)
 from src.pipeline.run_all import main as run_pipeline
-
-print("="*60)
-print("Starting NHiTS Pipeline...")
-print("="*60)
-
 run_pipeline()
 ```
 

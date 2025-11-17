@@ -20,28 +20,37 @@ def run(config_dir: str = "config", **kwargs):
         config_dir: 설정 디렉토리 경로
         **kwargs: 추가 인자 (val_mode, val_tail_months 등)
     """
-    from src.pipeline.run_all import main
+    # Jupyter/Colab 환경에서 sys.argv를 완전히 대체
+    # 원본 sys.argv 백업
+    original_argv = sys.argv.copy()
     
-    # sys.argv 설정
-    args = ['run_pipeline.py', '--config_dir', config_dir]
-    
-    if 'val_mode' in kwargs:
-        args.extend(['--val_mode', kwargs['val_mode']])
-    if 'val_tail_months' in kwargs:
-        args.extend(['--val_tail_months', str(kwargs['val_tail_months'])])
-    if 'val_start' in kwargs:
-        args.extend(['--val_start', kwargs['val_start']])
-    if 'val_end' in kwargs:
-        args.extend(['--val_end', kwargs['val_end']])
-    if 'skip_training' in kwargs and kwargs['skip_training']:
-        args.append('--skip_training')
-    if 'skip_evaluation' in kwargs and kwargs['skip_evaluation']:
-        args.append('--skip_evaluation')
-    if 'skip_forecast' in kwargs and kwargs['skip_forecast']:
-        args.append('--skip_forecast')
-    
-    sys.argv = args
-    main()
+    try:
+        # 새로운 sys.argv 설정 (Jupyter 커널 인자 제외)
+        new_argv = ['run_pipeline.py', '--config_dir', config_dir]
+        
+        if 'val_mode' in kwargs:
+            new_argv.extend(['--val_mode', kwargs['val_mode']])
+        if 'val_tail_months' in kwargs:
+            new_argv.extend(['--val_tail_months', str(kwargs['val_tail_months'])])
+        if 'val_start' in kwargs:
+            new_argv.extend(['--val_start', kwargs['val_start']])
+        if 'val_end' in kwargs:
+            new_argv.extend(['--val_end', kwargs['val_end']])
+        if 'skip_training' in kwargs and kwargs['skip_training']:
+            new_argv.append('--skip_training')
+        if 'skip_evaluation' in kwargs and kwargs['skip_evaluation']:
+            new_argv.append('--skip_evaluation')
+        if 'skip_forecast' in kwargs and kwargs['skip_forecast']:
+            new_argv.append('--skip_forecast')
+        
+        # sys.argv 완전히 대체
+        sys.argv = new_argv
+        
+        from src.pipeline.run_all import main
+        main()
+    finally:
+        # 원본 sys.argv 복원
+        sys.argv = original_argv
 
 
 if __name__ == "__main__":
