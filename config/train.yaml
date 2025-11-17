@@ -5,4 +5,6 @@ batch_size: 32
 lr: 0.001
 scaler: "standard"
 use_gpu: true
+dropout_rate: 0.1      # dropout rate for Monte Carlo Dropout (0.0 to 1.0)
+mc_samples: 100        # number of Monte Carlo samples for confidence intervals
 

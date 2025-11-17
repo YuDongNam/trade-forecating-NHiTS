@@ -21,6 +21,7 @@ from ..data.feature_engineering import drop_unused_fx_columns
 from ..data.preprocess import scale_columns
 from ..model import create_nhits
 from .plotting import plot_forecast
+from .mc_dropout import predict_with_mc_dropout
 
 
 def forecast_target(
@@ -75,16 +76,23 @@ def forecast_target(
     # 4) Create and fit model
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    # Enable prediction_intervals to use level/quantiles during predict
-    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
+    print(f"Dropout rate: {train_config.dropout_rate} (for Monte Carlo Dropout)")
+    nhits_model = create_nhits(train_config, exog_dim, dropout_rate=train_config.dropout_rate)
     nf = NeuralForecast(models=[nhits_model], freq="ME")  # Use 'ME' instead of deprecated 'M'
     
     print("Fitting model on full history...")
     nf.fit(df=full_nf, val_size=0)
     
-    # 5) Generate forecast
+    # 5) Generate forecast using Monte Carlo Dropout
     print(f"Generating forecast for next {train_config.horizon} months...")
-    predictions = nf.predict(df=full_nf, level=[95])
+    print(f"Using Monte Carlo Dropout with {train_config.mc_samples} samples...")
+    predictions = predict_with_mc_dropout(
+        nf=nf,
+        df=full_nf,
+        n_samples=train_config.mc_samples,
+        level=95,
+        model_name="NHITS"
+    )
     
     # Extract forecast values
     forecast_values = predictions["NHITS"].values

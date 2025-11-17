@@ -24,6 +24,7 @@ from ..data import load_target_df, split_train_val, scale_columns
 from ..data.feature_engineering import drop_unused_fx_columns
 from ..model import create_nhits
 from .metrics import compute_all_metrics, r2
+from .mc_dropout import predict_with_mc_dropout
 
 
 def train_target(
@@ -89,8 +90,8 @@ def train_target(
     # 5) Create NHITS model
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    # Enable prediction_intervals to use level/quantiles during predict
-    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
+    print(f"Dropout rate: {train_config.dropout_rate} (for Monte Carlo Dropout)")
+    nhits_model = create_nhits(train_config, exog_dim, dropout_rate=train_config.dropout_rate)
     
     # 6) Initialize NeuralForecast
     nf = NeuralForecast(
@@ -107,8 +108,14 @@ def train_target(
     val_metrics = None
     if len(val_df) > 0:
         print("Computing validation metrics...")
-        # Generate predictions on validation set
-        predictions = nf.predict(df=train_nf, level=[95])
+        # Generate predictions on validation set using Monte Carlo Dropout
+        predictions = predict_with_mc_dropout(
+            nf=nf,
+            df=train_nf,
+            n_samples=train_config.mc_samples,
+            level=95,
+            model_name="NHITS"
+        )
         
         num_val = min(len(val_df), train_config.horizon)
         val_pred_scaled = predictions["NHITS"].values[:num_val]
@@ -129,7 +136,8 @@ def train_target(
         # For full-period R², we use the model's fitted predictions on training data
         # Generate predictions using the trained model on training data
         # This gives us in-sample performance
-        full_predictions = nf.predict(df=train_nf, level=[95])
+        # Use point predictions for R² (faster, and R² doesn't need intervals)
+        full_predictions = nf.predict(df=train_nf)
         
         # Use all available training predictions
         # Note: predictions are for the forecast horizon, so we take what we can

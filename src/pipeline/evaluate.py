@@ -25,6 +25,7 @@ from ..data.feature_engineering import drop_unused_fx_columns
 from ..model import create_nhits
 from .metrics import compute_all_metrics, r2
 from .plotting import plot_forecast, plot_full_period_with_validation
+from .mc_dropout import predict_with_mc_dropout
 
 
 def evaluate_target(
@@ -87,16 +88,22 @@ def evaluate_target(
     # 5) Create and fit model (or load if available)
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
-    # Enable prediction_intervals to use level/quantiles during predict
-    nhits_model = create_nhits(train_config, exog_dim, prediction_intervals=True)
+    print(f"Dropout rate: {train_config.dropout_rate} (for Monte Carlo Dropout)")
+    nhits_model = create_nhits(train_config, exog_dim, dropout_rate=train_config.dropout_rate)
     nf = NeuralForecast(models=[nhits_model], freq="ME")  # Use 'ME' instead of deprecated 'M'
     
     print("Fitting model on training data...")
     nf.fit(df=train_nf, val_size=0)
     
-    # 6) Generate predictions on validation set
-    print("Generating predictions...")
-    predictions = nf.predict(df=train_nf, level=[95])
+    # 6) Generate predictions on validation set using Monte Carlo Dropout
+    print("Generating predictions with Monte Carlo Dropout...")
+    predictions = predict_with_mc_dropout(
+        nf=nf,
+        df=train_nf,
+        n_samples=train_config.mc_samples,
+        level=95,
+        model_name="NHITS"
+    )
     
     # Get predictions for validation period
     num_val = min(len(val_df), train_config.horizon)
@@ -124,7 +131,8 @@ def evaluate_target(
     
     # 9) Compute full-period R²
     print("Computing full-period R²...")
-    full_predictions = nf.predict(df=train_nf, level=[95])
+    # Use point predictions for R² calculation (faster)
+    full_predictions = nf.predict(df=train_nf)
     num_pred = min(len(train_df), len(full_predictions))
     if num_pred > 0:
         train_pred_scaled = full_predictions["NHITS"].values[:num_pred]

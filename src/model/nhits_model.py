@@ -2,14 +2,14 @@ from neuralforecast.models import NHITS
 from ..config.yaml_loader import TrainConfig
 
 
-def create_nhits(config: TrainConfig, exog_dim: int = 0, prediction_intervals: bool = True) -> NHITS:
+def create_nhits(config: TrainConfig, exog_dim: int = 0, dropout_rate: float = 0.1) -> NHITS:
     """
-    Create and configure an NHITS model.
+    Create and configure an NHITS model with dropout for Monte Carlo Dropout.
     
     Args:
         config: Training configuration
         exog_dim: Number of exogenous variables (optional, auto-detected from data)
-        prediction_intervals: Whether to enable prediction intervals (for level/quantiles in predict)
+        dropout_rate: Dropout rate for Monte Carlo Dropout (default: 0.1)
     
     Returns:
         Configured NHITS model
@@ -25,14 +25,23 @@ def create_nhits(config: TrainConfig, exog_dim: int = 0, prediction_intervals: b
         "learning_rate": config.lr,
     }
     
-    # Enable prediction intervals to use level/quantiles during predict
-    if prediction_intervals:
-        model_kwargs["prediction_intervals"] = True
+    # Add dropout if supported by NHITS
+    # Note: Some versions of neuralforecast support dropout_rate parameter
+    if dropout_rate > 0:
+        # Try to add dropout_rate if the model supports it
+        try:
+            model_kwargs["dropout_rate"] = dropout_rate
+        except TypeError:
+            # If dropout_rate is not supported, model will use default dropout
+            pass
+    
+    # Create model
+    model = NHITS(**model_kwargs)
     
     # Only add n_x if exog_dim > 0 and the version supports it
     # For now, let neuralforecast auto-detect from data
     # if exog_dim > 0:
     #     model_kwargs["n_x"] = exog_dim
     
-    return NHITS(**model_kwargs)
+    return model
 

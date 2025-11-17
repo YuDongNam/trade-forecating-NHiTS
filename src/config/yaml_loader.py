@@ -24,6 +24,8 @@ class TrainConfig:
     lr: float
     scaler: str
     use_gpu: bool
+    dropout_rate: float = 0.1
+    mc_samples: int = 100
 
 
 @dataclass

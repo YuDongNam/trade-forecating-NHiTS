@@ -109,8 +109,20 @@ The pipeline uses the **NHiTS** (Neural Hierarchical Interpolation for Time Seri
 - **Batch Size**: 32
 - **Learning Rate**: 1e-3
 - **Scaler**: StandardScaler
+- **Dropout Rate**: 0.1 (for Monte Carlo Dropout)
+- **MC Samples**: 100 (number of samples for confidence intervals)
 
 These can be modified in `config/train.yaml`.
+
+### Confidence Intervals (Monte Carlo Dropout)
+
+The pipeline uses **Monte Carlo Dropout** to estimate prediction uncertainty and generate 95% confidence intervals:
+
+1. **Training**: Model is trained with dropout enabled
+2. **Prediction**: Model is set to training mode (dropout active) and multiple predictions are generated
+3. **Uncertainty**: Confidence intervals are computed from the distribution of predictions
+
+This approach provides uncertainty quantification without requiring the model to explicitly support prediction intervals.
 
 ### Exogenous Variables
 
