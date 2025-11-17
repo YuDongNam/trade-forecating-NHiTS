@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 from typing import Optional
-from ..config.base_config import ExogenousConfig
+from ..config.yaml_loader import ExogenousConfig
 
 
 def load_target_df(target: str, raw_data_dir: Path, exog_config: ExogenousConfig) -> pd.DataFrame:

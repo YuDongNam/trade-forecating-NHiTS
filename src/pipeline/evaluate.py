@@ -1,48 +1,39 @@
+"""
+Evaluation pipeline for NHITS models.
+"""
+import argparse
+import json
+import pickle
 import pandas as pd
 import numpy as np
-import json
-import matplotlib.pyplot as plt
 from pathlib import Path
 from neuralforecast import NeuralForecast
-from ..config import TrainConfig, ExogenousConfig, RAW_DATA_DIR, RESULT_DIR, MODEL_DIR, TARGETS
-from ..data import load_target_df, train_val_split, train_val_split_by_date, scale_columns
+
+from ..config.yaml_loader import (
+    load_paths_config,
+    load_train_config,
+    load_validation_config,
+    load_exogenous_config,
+    load_targets_config,
+    TrainConfig,
+    ExogenousConfig,
+    ValidationConfig,
+    PathsConfig,
+)
+from ..data import load_target_df, split_train_val, scale_columns
 from ..data.feature_engineering import drop_unused_fx_columns
 from ..model import create_nhits
-
-
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    """
-    Compute evaluation metrics.
-    
-    Args:
-        y_true: True values
-        y_pred: Predicted values
-    
-    Returns:
-        Dictionary with RMSE, MAE, MAPE
-    """
-    rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
-    mae = np.mean(np.abs(y_true - y_pred))
-    
-    # MAPE: avoid division by zero
-    mask = y_true != 0
-    if mask.sum() > 0:
-        mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
-    else:
-        mape = np.nan
-    
-    return {
-        "RMSE": float(rmse),
-        "MAE": float(mae),
-        "MAPE": float(mape)
-    }
+from .metrics import compute_all_metrics, r2
+from .plotting import plot_forecast, plot_full_period_with_validation
 
 
 def evaluate_target(
     target: str,
     train_config: TrainConfig,
+    validation_config: ValidationConfig,
     exog_config: ExogenousConfig,
-    val_length: int = 24
+    paths_config: PathsConfig,
+    load_trained_model: bool = False
 ):
     """
     Evaluate NHITS model for a single target.
@@ -50,8 +41,13 @@ def evaluate_target(
     Args:
         target: Target name
         train_config: Training configuration
+        validation_config: Validation configuration
         exog_config: Exogenous configuration
-        val_length: Validation set length in months
+        paths_config: Paths configuration
+        load_trained_model: Whether to load a pre-trained model (not implemented yet)
+    
+    Returns:
+        Dictionary with evaluation metrics
     """
     print(f"\n{'='*60}")
     print(f"Evaluating model for: {target}")
@@ -59,11 +55,19 @@ def evaluate_target(
     
     # 1) Load full data
     print("Loading data...")
-    df = load_target_df(target, RAW_DATA_DIR, exog_config)
+    raw_data_dir = Path(paths_config.raw_data_dir)
+    df = load_target_df(target, raw_data_dir, exog_config)
     df = drop_unused_fx_columns(df, target)
     
-    # 2) Split into train/val
-    train_df, val_df = train_val_split(df, train_config.horizon, val_length)
+    # 2) Split into train/val using config
+    print(f"Splitting data (mode: {validation_config.mode})...")
+    train_df, val_df = split_train_val(df, validation_config)
+    
+    if len(val_df) == 0:
+        print(f"Warning: No validation data for {target}. Skipping evaluation.")
+        return None
+    
+    print(f"Train shape: {train_df.shape}, Val shape: {val_df.shape}")
     
     # 3) Scale data (same as training)
     exog_cols = [col for col in train_df.columns if col not in ["ds", "y"]]
@@ -80,273 +84,198 @@ def evaluate_target(
     val_nf["unique_id"] = target
     val_nf = val_nf[["unique_id", "ds", "y"] + exog_cols]
     
-    # Combine train and val for full history
-    full_nf = pd.concat([train_nf, val_nf], ignore_index=True)
-    
-    # 5) Create and load model
-    exog_dim = len(exog_cols)
-    nhits_model = create_nhits(train_config, exog_dim)
-    nf = NeuralForecast(models=[nhits_model], freq="M")
-    
-    # 6) Fit on full training data
-    print("Fitting model on training data...")
-    nf.fit(df=train_nf, val_size=0)  # No validation split, we'll evaluate manually
-    
-    # 7) Generate predictions on validation set
-    print("Generating predictions...")
-    # Predict using only training data up to validation start
-    predictions = nf.predict(df=train_nf)
-    
-    # Get predictions for the forecast horizon
-    # NeuralForecast returns predictions for the next 'h' steps
-    val_pred_scaled = predictions["NHITS"].values[:len(val_df)]
-    
-    # Get actual validation values (already scaled)
-    val_actual_scaled = val_nf["y"].values[-len(val_df):]
-    
-    # 8) Inverse transform predictions and actuals
-    val_pred = target_scaler.inverse_transform(val_pred_scaled.reshape(-1, 1)).flatten()
-    val_actual = target_scaler.inverse_transform(val_actual_scaled.reshape(-1, 1)).flatten()
-    
-    # 9) Compute metrics
-    metrics = compute_metrics(val_actual, val_pred)
-    print(f"Metrics: {metrics}")
-    
-    # 10) Save metrics
-    RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    metrics_path = RESULT_DIR / f"{target}_metrics.json"
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Metrics saved to: {metrics_path}")
-    
-    # 11) Generate plot
-    print("Generating plot...")
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    # Plot actual (validation)
-    ax.plot(val_df["ds"], val_actual, "k-", label="Actual", linewidth=2)
-    
-    # Plot forecast
-    ax.plot(val_df["ds"], val_pred, "b-", label="Forecast", linewidth=2)
-    
-    ax.set_xlabel("Date", fontsize=12)
-    ax.set_ylabel("Trade Balance", fontsize=12)
-    ax.set_title(
-        f"{target}\nRMSE: {metrics['RMSE']:.3f}, MAE: {metrics['MAE']:.3f}, MAPE: {metrics['MAPE']:.3f}%",
-        fontsize=14
-    )
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    
-    # Save figure
-    plot_path = RESULT_DIR / f"{target}_forecast.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"Plot saved to: {plot_path}")
-    
-    return metrics
-
-
-def evaluate_2024(
-    target: str,
-    train_config: TrainConfig,
-    exog_config: ExogenousConfig
-):
-    """
-    Evaluate model by training on data up to 2023-12-01 and predicting 2024.
-    
-    Args:
-        target: Target name
-        train_config: Training configuration
-        exog_config: Exogenous configuration
-    
-    Returns:
-        Dictionary with RMSE, MAE, MAPE metrics
-    """
-    print(f"\n{'='*60}")
-    print(f"Evaluating {target} - Training on 2023 data, Predicting 2024")
-    print(f"{'='*60}")
-    
-    # 1) Load full data
-    print("Loading data...")
-    df = load_target_df(target, RAW_DATA_DIR, exog_config)
-    df = drop_unused_fx_columns(df, target)
-    
-    # 2) Split by date: train up to 2023-12-01, validate 2024
-    print("Splitting data: train <= 2023-12-01, validation = 2024...")
-    train_df, val_df = train_val_split_by_date(df, train_end_date="2023-12-01")
-    
-    print(f"Train period: {train_df['ds'].min()} to {train_df['ds'].max()}")
-    print(f"Train shape: {train_df.shape}")
-    print(f"Validation period: {val_df['ds'].min()} to {val_df['ds'].max()}")
-    print(f"Validation shape: {val_df.shape}")
-    
-    if len(val_df) == 0:
-        print(f"Warning: No validation data found for 2024. Skipping {target}.")
-        return None
-    
-    if len(val_df) < train_config.horizon:
-        print(f"Warning: Validation data ({len(val_df)} months) is less than horizon ({train_config.horizon} months).")
-        print(f"Using available {len(val_df)} months for validation.")
-    
-    # 3) Scale data (fit on train, transform both)
-    exog_cols = [col for col in train_df.columns if col not in ["ds", "y"]]
-    train_df_scaled, val_df_scaled, target_scaler, exog_scaler = scale_columns(
-        train_df, val_df, target_col="y", exog_cols=exog_cols
-    )
-    
-    # 4) Prepare data for NeuralForecast
-    train_nf = train_df_scaled.copy()
-    train_nf["unique_id"] = target
-    train_nf = train_nf[["unique_id", "ds", "y"] + exog_cols]
-    
-    # For validation, we need exogenous variables for 2024
-    # Use the scaled validation data
-    val_nf = val_df_scaled.copy()
-    val_nf["unique_id"] = target
-    val_nf = val_nf[["unique_id", "ds", "y"] + exog_cols]
-    
-    # 5) Create and fit model
+    # 5) Create and fit model (or load if available)
     exog_dim = len(exog_cols)
     print(f"Creating NHITS model with {exog_dim} exogenous variables...")
     nhits_model = create_nhits(train_config, exog_dim)
     nf = NeuralForecast(models=[nhits_model], freq="M")
     
-    print("Training model on 2023 data...")
+    print("Fitting model on training data...")
     nf.fit(df=train_nf, val_size=0)
     
-    # 6) Generate predictions for 2024
-    print("Generating predictions for 2024...")
-    # Predict using training data up to 2023-12-01
-    predictions = nf.predict(df=train_nf)
+    # 6) Generate predictions on validation set
+    print("Generating predictions...")
+    predictions = nf.predict(df=train_nf, level=[95])
     
-    # Get predictions for 2024 (first 12 months or available months)
-    num_val_months = min(len(val_df), train_config.horizon)
-    val_pred_scaled = predictions["NHITS"].values[:num_val_months]
+    # Get predictions for validation period
+    num_val = min(len(val_df), train_config.horizon)
+    val_pred_scaled = predictions["NHITS"].values[:num_val]
+    val_lower_scaled = predictions["NHITS-lo-95"].values[:num_val] if "NHITS-lo-95" in predictions.columns else None
+    val_upper_scaled = predictions["NHITS-hi-95"].values[:num_val] if "NHITS-hi-95" in predictions.columns else None
     
-    # Get actual 2024 values (first num_val_months)
-    val_actual_scaled = val_nf["y"].values[:num_val_months]
+    val_actual_scaled = val_nf["y"].values[:num_val]
     
     # 7) Inverse transform
     val_pred = target_scaler.inverse_transform(val_pred_scaled.reshape(-1, 1)).flatten()
     val_actual = target_scaler.inverse_transform(val_actual_scaled.reshape(-1, 1)).flatten()
     
-    # Align dates
-    val_dates = val_df["ds"].values[:num_val_months]
+    val_lower = None
+    val_upper = None
+    if val_lower_scaled is not None and val_upper_scaled is not None:
+        val_lower = target_scaler.inverse_transform(val_lower_scaled.reshape(-1, 1)).flatten()
+        val_upper = target_scaler.inverse_transform(val_upper_scaled.reshape(-1, 1)).flatten()
     
-    # 8) Compute metrics
-    metrics = compute_metrics(val_actual, val_pred)
-    print(f"\n{'='*60}")
-    print(f"Validation Metrics for {target} (2024):")
-    print(f"  RMSE: {metrics['RMSE']:.3f}")
-    print(f"  MAE:  {metrics['MAE']:.3f}")
-    print(f"  MAPE: {metrics['MAPE']:.3f}%")
-    print(f"{'='*60}")
+    val_dates = val_df["ds"].values[:num_val]
     
-    # 9) Save metrics
-    RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    metrics_path = RESULT_DIR / f"{target}_2024_metrics.json"
+    # 8) Compute validation metrics
+    val_metrics = compute_all_metrics(val_actual, val_pred)
+    print(f"Validation Metrics: RMSE={val_metrics['RMSE']:.3f}, MAE={val_metrics['MAE']:.3f}, MAPE={val_metrics['MAPE']:.3f}%")
+    
+    # 9) Compute full-period R²
+    print("Computing full-period R²...")
+    full_predictions = nf.predict(df=train_nf, level=[95])
+    num_pred = min(len(train_df), len(full_predictions))
+    if num_pred > 0:
+        train_pred_scaled = full_predictions["NHITS"].values[:num_pred]
+        # Align with actual values (take last num_pred values from training set)
+        train_actual_scaled = train_nf["y"].values[-num_pred:]
+        train_pred = target_scaler.inverse_transform(train_pred_scaled.reshape(-1, 1)).flatten()
+        train_actual = target_scaler.inverse_transform(train_actual_scaled.reshape(-1, 1)).flatten()
+        r2_full = r2(train_actual, train_pred)
+        print(f"Full-period R²: {r2_full:.4f}")
+    else:
+        r2_full = None
+        print("Warning: Could not compute full-period R² (no predictions available)")
+    
+    # 10) Save metrics
+    result_dir = Path(paths_config.result_dir)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    
+    metrics_path = result_dir / f"{target}_val_metrics.json"
     with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(val_metrics, f, indent=2)
     print(f"Metrics saved to: {metrics_path}")
     
-    # 10) Generate plot
+    # 11) Save full-period R²
+    if r2_full is not None:
+        r2_path = result_dir / f"{target}_full_r2.json"
+        with open(r2_path, "w") as f:
+            json.dump({"target": target, "r2_full": r2_full}, f, indent=2)
+        print(f"Full-period R² saved to: {r2_path}")
+    
+    # 12) Generate plot
     print("Generating plot...")
-    fig, ax = plt.subplots(figsize=(14, 7))
+    metrics_text = f"RMSE: {val_metrics['RMSE']:.3f}, MAE: {val_metrics['MAE']:.3f}, MAPE: {val_metrics['MAPE']:.3f}%"
+    if r2_full is not None:
+        metrics_text += f", R²(full): {r2_full:.4f}"
     
-    # Plot actual 2024
-    ax.plot(val_dates, val_actual, "ko-", label="Actual 2024", linewidth=2, markersize=8)
-    
-    # Plot forecast 2024
-    ax.plot(val_dates, val_pred, "bs-", label="Forecast 2024", linewidth=2, markersize=8, alpha=0.7)
-    
-    ax.set_xlabel("Date", fontsize=12)
-    ax.set_ylabel("Trade Balance", fontsize=12)
-    ax.set_title(
-        f"{target} - 2024 Validation\n"
-        f"RMSE: {metrics['RMSE']:.3f}, MAE: {metrics['MAE']:.3f}, MAPE: {metrics['MAPE']:.3f}%",
-        fontsize=14,
-        fontweight="bold"
+    plot_path = result_dir / f"{target}_forecast.png"
+    plot_forecast(
+        dates=pd.Series(val_dates),
+        y_actual=pd.Series(val_actual),
+        y_pred=pd.Series(val_pred),
+        y_lower=pd.Series(val_lower) if val_lower is not None else None,
+        y_upper=pd.Series(val_upper) if val_upper is not None else None,
+        title=target,
+        metrics_text=metrics_text,
+        save_path=plot_path,
+        show=False
     )
-    ax.legend(fontsize=11)
-    ax.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    
-    # Save figure
-    plot_path = RESULT_DIR / f"{target}_2024_validation.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches="tight")
-    plt.close()
     print(f"Plot saved to: {plot_path}")
     
-    # 11) Save detailed results
+    # 13) Save detailed results
     results_df = pd.DataFrame({
         "ds": val_dates,
         "y_actual": val_actual,
         "y_pred": val_pred,
-        "error": val_actual - val_pred,
-        "abs_error": np.abs(val_actual - val_pred),
-        "pct_error": ((val_actual - val_pred) / val_actual * 100) if np.any(val_actual != 0) else np.nan
     })
     
-    results_path = RESULT_DIR / f"{target}_2024_validation.csv"
+    if val_lower is not None and val_upper is not None:
+        results_df["y_pred_lower_95"] = val_lower
+        results_df["y_pred_upper_95"] = val_upper
+    
+    results_df["error"] = val_actual - val_pred
+    results_df["abs_error"] = np.abs(val_actual - val_pred)
+    if np.any(val_actual != 0):
+        results_df["pct_error"] = ((val_actual - val_pred) / val_actual * 100)
+    else:
+        results_df["pct_error"] = np.nan
+    
+    results_path = result_dir / f"{target}_validation.csv"
     results_df.to_csv(results_path, index=False)
     print(f"Detailed results saved to: {results_path}")
     
-    return metrics
+    return {
+        "target": target,
+        "val_metrics": val_metrics,
+        "r2_full": r2_full
+    }
 
 
 def main():
     """Evaluate models for all targets."""
-    train_config = TrainConfig()
-    exog_config = ExogenousConfig()
+    parser = argparse.ArgumentParser(description="Evaluate NHITS models")
+    parser.add_argument(
+        "--config_dir",
+        type=str,
+        default="config",
+        help="Directory containing YAML config files"
+    )
+    parser.add_argument(
+        "--val_mode",
+        type=str,
+        default=None,
+        help="Override validation mode (tail/range/none)"
+    )
+    parser.add_argument(
+        "--val_tail_months",
+        type=int,
+        default=None,
+        help="Override validation tail_months"
+    )
+    parser.add_argument(
+        "--val_start",
+        type=str,
+        default=None,
+        help="Override validation start date (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--val_end",
+        type=str,
+        default=None,
+        help="Override validation end date (YYYY-MM-DD)"
+    )
     
-    all_metrics = {}
+    args = parser.parse_args()
+    config_dir = Path(args.config_dir)
     
-    for target in TARGETS:
-        try:
-            metrics = evaluate_target(target, train_config, exog_config)
-            all_metrics[target] = metrics
-        except Exception as e:
-            print(f"Error evaluating {target}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+    # Load configurations
+    paths_config = load_paths_config(config_dir)
+    train_config = load_train_config(config_dir)
+    validation_config = load_validation_config(config_dir)
+    exog_config = load_exogenous_config(config_dir)
+    targets_config = load_targets_config(config_dir)
     
-    # Print summary table
-    print("\n" + "="*60)
-    print("SUMMARY OF METRICS")
+    # Override validation config with CLI arguments if provided
+    if args.val_mode:
+        validation_config.mode = args.val_mode
+    if args.val_tail_months:
+        validation_config.tail_months = args.val_tail_months
+    if args.val_start:
+        validation_config.start = args.val_start
+    if args.val_end:
+        validation_config.end = args.val_end
+    
     print("="*60)
-    print(f"{'Target':<20} {'RMSE':<12} {'MAE':<12} {'MAPE':<12}")
-    print("-"*60)
-    for target, metrics in all_metrics.items():
-        print(f"{target:<20} {metrics['RMSE']:<12.3f} {metrics['MAE']:<12.3f} {metrics['MAPE']:<12.3f}")
-    
-    # Save summary
-    summary_path = RESULT_DIR / "summary_metrics.json"
-    with open(summary_path, "w") as f:
-        json.dump(all_metrics, f, indent=2)
-    print(f"\nSummary saved to: {summary_path}")
-
-
-def main_2024():
-    """Evaluate models for all targets using 2023 training and 2024 validation."""
-    train_config = TrainConfig()
-    exog_config = ExogenousConfig()
+    print("NHiTS Evaluation Pipeline")
+    print("="*60)
+    print(f"Config directory: {config_dir}")
+    print(f"Validation mode: {validation_config.mode}")
+    print("="*60)
     
     all_metrics = {}
     
-    print("\n" + "="*80)
-    print("2024 VALIDATION - Training on 2023 data, Predicting 2024")
-    print("="*80)
-    
-    for target in TARGETS:
+    for target in targets_config.targets:
         try:
-            metrics = evaluate_2024(target, train_config, exog_config)
-            if metrics is not None:
-                all_metrics[target] = metrics
+            result = evaluate_target(
+                target,
+                train_config,
+                validation_config,
+                exog_config,
+                paths_config
+            )
+            if result:
+                all_metrics[target] = result
         except Exception as e:
             print(f"Error evaluating {target}: {e}")
             import traceback
@@ -355,28 +284,29 @@ def main_2024():
     
     # Print summary table
     print("\n" + "="*80)
-    print("SUMMARY OF 2024 VALIDATION METRICS")
+    print("SUMMARY OF METRICS")
     print("="*80)
-    print(f"{'Target':<20} {'RMSE':<15} {'MAE':<15} {'MAPE':<15}")
+    print(f"{'Target':<20} {'RMSE':<12} {'MAE':<12} {'MAPE':<12} {'R² Full':<12}")
     print("-"*80)
-    for target, metrics in all_metrics.items():
-        print(f"{target:<20} {metrics['RMSE']:<15.3f} {metrics['MAE']:<15.3f} {metrics['MAPE']:<15.3f}%")
+    for target, result in all_metrics.items():
+        val_metrics = result.get("val_metrics", {})
+        r2_full = result.get("r2_full")
+        rmse = val_metrics.get("RMSE", "N/A")
+        mae = val_metrics.get("MAE", "N/A")
+        mape = val_metrics.get("MAPE", "N/A")
+        r2_str = f"{r2_full:.4f}" if r2_full is not None else "N/A"
+        
+        if isinstance(rmse, (int, float)):
+            print(f"{target:<20} {rmse:<12.3f} {mae:<12.3f} {mape:<12.3f} {r2_str:<12}")
+        else:
+            print(f"{target:<20} {rmse:<12} {mae:<12} {mape:<12} {r2_str:<12}")
     
     # Save summary
-    summary_path = RESULT_DIR / "summary_2024_metrics.json"
+    summary_path = Path(paths_config.result_dir) / "summary_metrics.json"
     with open(summary_path, "w") as f:
         json.dump(all_metrics, f, indent=2)
     print(f"\nSummary saved to: {summary_path}")
-    
-    return all_metrics
 
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "2024":
-        # Run 2024 validation
-        main_2024()
-    else:
-        # Run default validation (last 24 months)
-        main()
-
+    main()

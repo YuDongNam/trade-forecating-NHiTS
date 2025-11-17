@@ -1,17 +1,32 @@
+"""
+Forecasting pipeline for NHITS models.
+"""
+import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from neuralforecast import NeuralForecast
-from ..config import TrainConfig, ExogenousConfig, RAW_DATA_DIR, RESULT_DIR, MODEL_DIR, TARGETS
+
+from ..config.yaml_loader import (
+    load_paths_config,
+    load_train_config,
+    load_exogenous_config,
+    load_targets_config,
+    TrainConfig,
+    ExogenousConfig,
+    PathsConfig,
+)
 from ..data import load_target_df
 from ..data.feature_engineering import drop_unused_fx_columns
+from ..data.preprocess import scale_columns
 from ..model import create_nhits
 
 
 def forecast_target(
     target: str,
     train_config: TrainConfig,
-    exog_config: ExogenousConfig
+    exog_config: ExogenousConfig,
+    paths_config: PathsConfig
 ):
     """
     Generate forecasts for a single target.
@@ -20,6 +35,7 @@ def forecast_target(
         target: Target name
         train_config: Training configuration
         exog_config: Exogenous configuration
+        paths_config: Paths configuration
     """
     print(f"\n{'='*60}")
     print(f"Forecasting for: {target}")
@@ -27,15 +43,12 @@ def forecast_target(
     
     # 1) Load full data (train+val)
     print("Loading data...")
-    df = load_target_df(target, RAW_DATA_DIR, exog_config)
+    raw_data_dir = Path(paths_config.raw_data_dir)
+    df = load_target_df(target, raw_data_dir, exog_config)
     df = drop_unused_fx_columns(df, target)
     
     # 2) Scale data (we need to fit scaler on full history)
-    from ..data.preprocess import scale_columns
-    
     # For forecasting, we use all available data for scaling
-    # In practice, you'd use the same scaler from training
-    # For simplicity, we'll scale here
     exog_cols = [col for col in df.columns if col not in ["ds", "y"]]
     
     # Create dummy train/val split just for scaling
@@ -69,15 +82,27 @@ def forecast_target(
     
     # 5) Generate forecast
     print(f"Generating forecast for next {train_config.horizon} months...")
-    predictions = nf.predict(df=full_nf)
+    predictions = nf.predict(df=full_nf, level=[95])
     
     # Extract forecast values
     forecast_values = predictions["NHITS"].values
+    forecast_lower = predictions["NHITS-lo-95"].values if "NHITS-lo-95" in predictions.columns else None
+    forecast_upper = predictions["NHITS-hi-95"].values if "NHITS-hi-95" in predictions.columns else None
     
     # 6) Inverse transform forecast
     forecast_inverse = target_scaler.inverse_transform(
         forecast_values.reshape(-1, 1)
     ).flatten()
+    
+    forecast_lower_inverse = None
+    forecast_upper_inverse = None
+    if forecast_lower is not None and forecast_upper is not None:
+        forecast_lower_inverse = target_scaler.inverse_transform(
+            forecast_lower.reshape(-1, 1)
+        ).flatten()
+        forecast_upper_inverse = target_scaler.inverse_transform(
+            forecast_upper.reshape(-1, 1)
+        ).flatten()
     
     # 7) Create forecast dataframe
     # Generate future dates
@@ -94,6 +119,10 @@ def forecast_target(
         "y_hat": forecast_inverse
     })
     
+    if forecast_lower_inverse is not None and forecast_upper_inverse is not None:
+        forecast_df["y_hat_lower_95"] = forecast_lower_inverse
+        forecast_df["y_hat_upper_95"] = forecast_upper_inverse
+    
     # Combine with historical data
     historical_df = pd.DataFrame({
         "ds": df["ds"],
@@ -104,8 +133,9 @@ def forecast_target(
     result_df = pd.concat([historical_df, forecast_df], ignore_index=True)
     
     # 8) Save forecast
-    RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    forecast_path = RESULT_DIR / f"{target}_forecast.csv"
+    result_dir = Path(paths_config.result_dir)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    forecast_path = result_dir / f"{target}_forecast.csv"
     result_df.to_csv(forecast_path, index=False)
     print(f"Forecast saved to: {forecast_path}")
     
@@ -118,12 +148,32 @@ def forecast_target(
 
 def main():
     """Generate forecasts for all targets."""
-    train_config = TrainConfig()
-    exog_config = ExogenousConfig()
+    parser = argparse.ArgumentParser(description="Generate forecasts with NHITS models")
+    parser.add_argument(
+        "--config_dir",
+        type=str,
+        default="config",
+        help="Directory containing YAML config files"
+    )
     
-    for target in TARGETS:
+    args = parser.parse_args()
+    config_dir = Path(args.config_dir)
+    
+    # Load configurations
+    paths_config = load_paths_config(config_dir)
+    train_config = load_train_config(config_dir)
+    exog_config = load_exogenous_config(config_dir)
+    targets_config = load_targets_config(config_dir)
+    
+    print("="*60)
+    print("NHiTS Forecasting Pipeline")
+    print("="*60)
+    print(f"Config directory: {config_dir}")
+    print("="*60)
+    
+    for target in targets_config.targets:
         try:
-            forecast_target(target, train_config, exog_config)
+            forecast_target(target, train_config, exog_config, paths_config)
         except Exception as e:
             print(f"Error forecasting {target}: {e}")
             import traceback
@@ -133,4 +183,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -1,5 +1,5 @@
 from neuralforecast.models import NHITS
-from ..config.base_config import TrainConfig
+from ..config.yaml_loader import TrainConfig
 
 
 def create_nhits(config: TrainConfig, exog_dim: int = 0) -> NHITS:

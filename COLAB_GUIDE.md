@@ -160,8 +160,13 @@ for filename in uploaded.keys():
         # src 폴더 파일은 그대로 유지
         pass
 
-# 5. 실행
-!python -m src.pipeline.run_all
+# 5. 실행 (방법 1: bash 명령어)
+# !python -m src.pipeline.run_all
+
+# 5. 실행 (방법 2: import 방식 - tqdm 출력 개선)
+from tqdm.notebook import tqdm
+from src.pipeline.run_all import main as run_pipeline
+run_pipeline()
 ```
 
 ## 결과 다운로드

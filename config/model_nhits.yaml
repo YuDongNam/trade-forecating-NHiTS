@@ -1,0 +1,7 @@
+# Model-specific parameters for NHITS
+# These are in addition to basic train config
+num_stacks: 3
+num_blocks: 3
+num_layers: 2
+activation: "ReLU"
+

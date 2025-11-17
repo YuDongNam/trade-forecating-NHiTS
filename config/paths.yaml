@@ -1,0 +1,4 @@
+raw_data_dir: "data"
+result_dir: "results"
+model_dir: "models"
+

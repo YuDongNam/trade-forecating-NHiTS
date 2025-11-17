@@ -1,0 +1,6 @@
+# Exogenous variables configuration
+use_tariff: true
+use_fx: true
+use_wti: true
+use_copper: true
+

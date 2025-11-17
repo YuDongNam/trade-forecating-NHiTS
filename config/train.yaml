@@ -1,0 +1,8 @@
+input_size: 36         # number of past months to use
+horizon: 12            # forecast horizon
+max_steps: 1500
+batch_size: 32
+lr: 0.001
+scaler: "standard"
+use_gpu: true
+

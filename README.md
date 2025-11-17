@@ -24,22 +24,33 @@ trade-forecasting/
 │   ├─ WTI.csv
 │   ├─ copper.csv
 │
+├─ config/                      # YAML configuration files
+│   ├─ paths.yaml              # Directory paths
+│   ├─ train.yaml              # Training configuration
+│   ├─ validation.yaml         # Validation configuration
+│   ├─ model_nhits.yaml        # Model-specific parameters
+│   ├─ targets.yaml            # Target series definitions
+│   └─ exogenous.yaml          # Exogenous variables configuration
+│
 ├─ src/
 │   ├─ config/
-│   │   ├─ base_config.py      # Training and exogenous configurations
-│   │   ├─ paths.py            # Directory paths
-│   │   ├─ targets.py          # Target series definitions
+│   │   ├─ yaml_loader.py      # YAML configuration loader
+│   │   ├─ base_config.py      # Legacy configs (deprecated)
+│   │   ├─ paths.py            # Legacy paths (deprecated)
+│   │   └─ targets.py          # Legacy targets (deprecated)
 │   ├─ data/
 │   │   ├─ load_data.py        # Data loading and merging
 │   │   ├─ preprocess.py       # Train/val split and scaling
-│   │   ├─ feature_engineering.py  # Feature selection and engineering
+│   │   └─ feature_engineering.py  # Feature selection and engineering
 │   ├─ model/
-│   │   ├─ nhits_model.py      # NHiTS model creation
-│   ├─ pipeline/
-│   │   ├─ train.py            # Training script
-│   │   ├─ evaluate.py         # Evaluation script
-│   │   ├─ forecast.py         # Forecasting script
-│   │   ├─ run_all.py          # Multi-target runner
+│   │   └─ nhits_model.py      # NHiTS model creation
+│   └─ pipeline/
+│       ├─ train.py            # Training script
+│       ├─ evaluate.py         # Evaluation script
+│       ├─ forecast.py         # Forecasting script
+│       ├─ run_all.py          # End-to-end pipeline runner
+│       ├─ metrics.py          # Metrics computation (RMSE, MAE, MAPE, R²)
+│       └─ plotting.py         # Plotting utilities
 │
 ├─ models/                      # Saved model checkpoints
 ├─ results/                     # Forecasts, metrics, and plots
@@ -63,11 +74,34 @@ Each of the 8 target CSV files should contain at minimum:
 - **WTI.csv**: WTI crude oil prices (Close column)
 - **copper.csv**: Copper futures prices (Close column)
 
+## Configuration
+
+The pipeline uses **YAML-based configuration** for flexible experiment management. All configuration files are located in the `config/` directory.
+
+### Configuration Files
+
+- **`config/paths.yaml`**: Directory paths (data, results, models)
+- **`config/train.yaml`**: Training parameters (input_size, horizon, max_steps, batch_size, lr, etc.)
+- **`config/validation.yaml`**: Validation configuration (mode: tail/range/none, tail_months, start/end dates)
+- **`config/model_nhits.yaml`**: Model-specific parameters (num_stacks, num_blocks, etc.)
+- **`config/targets.yaml`**: List of target series to process
+- **`config/exogenous.yaml`**: Exogenous variables configuration (use_tariff, use_fx, use_wti, use_copper)
+
+### Validation Modes
+
+The validation configuration supports three modes:
+
+1. **`tail`**: Use the last N months as validation (e.g., last 24 months)
+2. **`range`**: Use a specific date range for validation (e.g., 2023-01-01 to 2023-12-01)
+3. **`none`**: No validation split (use all data for training)
+
+Edit `config/validation.yaml` to change the validation strategy.
+
 ## Model Description
 
 The pipeline uses the **NHiTS** (Neural Hierarchical Interpolation for Time Series) model from the `neuralforecast` library.
 
-### Model Configuration
+### Default Model Configuration
 
 - **Input Size**: 36 months (3 years of history)
 - **Forecast Horizon**: 12 months
@@ -76,9 +110,11 @@ The pipeline uses the **NHiTS** (Neural Hierarchical Interpolation for Time Seri
 - **Learning Rate**: 1e-3
 - **Scaler**: StandardScaler
 
+These can be modified in `config/train.yaml`.
+
 ### Exogenous Variables
 
-The model incorporates the following exogenous variables:
+The model incorporates the following exogenous variables (configurable in `config/exogenous.yaml`):
 - Tariff rates and related features
 - Foreign exchange rates (country-specific)
 - WTI crude oil prices
@@ -130,49 +166,83 @@ os.makedirs("src/pipeline", exist_ok=True)
 
 ## Usage
 
+### Configuration
+
+All configuration is done through YAML files in the `config/` directory. Edit these files to customize:
+
+- Training parameters: `config/train.yaml`
+- Validation strategy: `config/validation.yaml`
+- Target series: `config/targets.yaml`
+- Exogenous variables: `config/exogenous.yaml`
+
 ### Train Models
 
 Train models for all targets:
 ```bash
+# Use default config directory
 python -m src.pipeline.train
+
+# Specify custom config directory
+python -m src.pipeline.train --config_dir config
+
+# Override validation mode via CLI
+python -m src.pipeline.train --val_mode range --val_start 2023-01-01 --val_end 2023-12-01
 ```
 
 ### Evaluate Models
 
 Evaluate models and generate metrics/plots:
 ```bash
-# Default: Evaluate on last 24 months
+# Use default config
 python -m src.pipeline.evaluate
 
-# 2024 Validation: Train on 2023 data, predict 2024
-python -m src.pipeline.evaluate 2024
+# Override validation configuration
+python -m src.pipeline.evaluate --val_mode tail --val_tail_months 12
 ```
 
 ### Generate Forecasts
 
 Generate forecasts for all targets:
 ```bash
-python -m src.pipeline.forecast
+python -m src.pipeline.forecast --config_dir config
 ```
 
 ### Run Complete Pipeline
 
 Run training, evaluation, and forecasting in sequence:
 ```bash
-python -m src.pipeline.run_all
+# Full pipeline
+python -m src.pipeline.run_all --config_dir config
+
+# Skip specific steps
+python -m src.pipeline.run_all --skip_training  # Use existing models
+python -m src.pipeline.run_all --skip_evaluation
+python -m src.pipeline.run_all --skip_forecast
 ```
 
 ## Output
 
 ### Models
-- Model checkpoints are saved in `models/{target}/`
+- Model checkpoints are saved in `models/{target}/` (configured in `config/paths.yaml`)
 - Scalers are saved as `models/{target}/scalers.pkl`
 
 ### Results
-- **Forecasts**: `results/{target}_forecast.csv` - Contains historical data and future forecasts
-- **Metrics**: `results/{target}_metrics.json` - RMSE, MAE, MAPE metrics
-- **Plots**: `results/{target}_forecast.png` - Visualization of actual vs forecasted values
+- **Validation Metrics**: `results/{target}_val_metrics.json` - RMSE, MAE, MAPE, R² for validation period
+- **Full-Period R²**: `results/{target}_full_r2.json` - R² computed over entire training period
+- **Forecasts**: `results/{target}_forecast.csv` - Contains historical data and future forecasts with confidence intervals
+- **Validation Details**: `results/{target}_validation.csv` - Detailed validation results with errors
+- **Plots**: `results/{target}_forecast.png` - Visualization of actual vs forecasted values with 95% confidence intervals
 - **Summary**: `results/summary_metrics.json` - Aggregated metrics for all targets
+
+### Metrics Explained
+
+- **RMSE** (Root Mean Squared Error): Measures average prediction error magnitude
+- **MAE** (Mean Absolute Error): Average absolute difference between predicted and actual values
+- **MAPE** (Mean Absolute Percentage Error): Average percentage error
+- **R²** (Coefficient of Determination): Measures how well the model explains the variance in the data
+  - R² = 1.0: Perfect predictions
+  - R² = 0.0: Model performs as well as predicting the mean
+  - R² < 0.0: Model performs worse than predicting the mean
 
 ## GPU Support
 
@@ -189,11 +259,36 @@ import torch
 print(torch.cuda.is_available())
 ```
 
-## Configuration
+## Advanced Configuration
 
-Model and data configurations can be modified in:
-- `src/config/base_config.py`: Training parameters and exogenous variable settings
-- `src/config/targets.py`: List of target series
+### Changing Validation Period
+
+Edit `config/validation.yaml`:
+
+```yaml
+# Use last 24 months
+mode: "tail"
+tail_months: 24
+
+# Or use specific date range
+mode: "range"
+start: "2023-01-01"
+end: "2023-12-01"
+
+# Or no validation split
+mode: "none"
+```
+
+You can also override via CLI arguments (see Usage section above).
+
+### Custom Training Parameters
+
+Edit `config/train.yaml` to adjust:
+- `input_size`: Number of past months to use (default: 36)
+- `horizon`: Forecast horizon in months (default: 12)
+- `max_steps`: Maximum training steps (default: 1500)
+- `batch_size`: Batch size (default: 32)
+- `lr`: Learning rate (default: 0.001)
 
 ## Dependencies
 
@@ -203,8 +298,9 @@ Model and data configurations can be modified in:
 - `numpy`: Numerical operations
 - `scikit-learn`: Data preprocessing (StandardScaler)
 - `matplotlib`: Plotting
-- `pydantic`: Configuration management
+- `pydantic`: Configuration validation
 - `tqdm`: Progress bars
+- `pyyaml`: YAML configuration file parsing
 
 ## Notes
 
@@ -212,7 +308,9 @@ Model and data configurations can be modified in:
 - Missing exogenous values are forward-filled and back-filled
 - Each target uses country-specific FX rates (Korea→USD_KRW, China→USD_CNY, Taiwan→USD_TWD)
 - World targets do not use specific FX rates
-- Validation set uses the last 24 months by default
+- Validation configuration is fully controlled via `config/validation.yaml` or CLI arguments
+- All metrics (RMSE, MAE, MAPE, R²) are computed using shared utilities in `src/pipeline/metrics.py`
+- Plots include 95% confidence intervals when available
 
 ## License
 

@@ -101,3 +101,55 @@ def scale_columns(
     
     return train_df_scaled, val_df_scaled, target_scaler, exog_scaler
 
+
+def split_train_val(
+    df: pd.DataFrame,
+    validation_config
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split data into train and validation sets based on validation configuration.
+    
+    Args:
+        df: Full dataset with "ds" column (datetime) and "y" column
+        validation_config: Validation configuration object
+    
+    Returns:
+        train_df, val_df
+    
+    Raises:
+        ValueError: If validation mode is invalid
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    df["ds"] = pd.to_datetime(df["ds"])
+    
+    if validation_config.mode == "tail":
+        if validation_config.tail_months is None:
+            raise ValueError("tail_months must be specified when mode is 'tail'")
+        
+        # Use last tail_months months as validation
+        split_idx = len(df) - validation_config.tail_months
+        train_df = df.iloc[:split_idx].copy()
+        val_df = df.iloc[split_idx:].copy()
+        
+    elif validation_config.mode == "range":
+        if validation_config.start is None or validation_config.end is None:
+            raise ValueError("start and end must be specified when mode is 'range'")
+        
+        start_date = pd.to_datetime(validation_config.start)
+        end_date = pd.to_datetime(validation_config.end)
+        
+        # Validation: records where start <= ds <= end
+        val_df = df[(df["ds"] >= start_date) & (df["ds"] <= end_date)].copy()
+        # Training: all records before validation start
+        train_df = df[df["ds"] < start_date].copy()
+        
+    elif validation_config.mode == "none":
+        # No validation split, use all data for training
+        train_df = df.copy()
+        val_df = pd.DataFrame(columns=df.columns)  # Empty validation set
+        
+    else:
+        raise ValueError(f"Invalid validation mode: {validation_config.mode}. Must be 'tail', 'range', or 'none'")
+    
+    return train_df, val_df
+

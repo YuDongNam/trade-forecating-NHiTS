@@ -1,0 +1,11 @@
+# validation.mode:
+#   - "tail": use last N months as validation
+#   - "range": use a specific date range
+#   - "none": no validation split (use all data for training)
+mode: "tail"
+tail_months: 24
+
+# If mode == "range", use these:
+start: "2023-01-01"
+end: "2023-12-01"
+
