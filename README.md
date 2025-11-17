@@ -210,6 +210,8 @@ python -m src.pipeline.forecast --config_dir config
 ### Run Complete Pipeline
 
 Run training, evaluation, and forecasting in sequence:
+
+**방법 1: 모듈 실행 (명령줄)**
 ```bash
 # Full pipeline
 python -m src.pipeline.run_all --config_dir config
@@ -218,6 +220,29 @@ python -m src.pipeline.run_all --config_dir config
 python -m src.pipeline.run_all --skip_training  # Use existing models
 python -m src.pipeline.run_all --skip_evaluation
 python -m src.pipeline.run_all --skip_forecast
+```
+
+**방법 2: Import 실행 (Python 코드, Colab 권장)**
+```python
+# Colab에서 tqdm 출력이 더 깔끔하게 보입니다
+from tqdm.notebook import tqdm
+from src.pipeline.run_all import main
+
+# 기본 실행
+main()
+
+# 또는 run_pipeline.py 스크립트 사용
+# python run_pipeline.py
+```
+
+**방법 3: 간편 스크립트 사용**
+```bash
+# run_pipeline.py 사용 (인자 전달 가능)
+python run_pipeline.py
+
+# Python 코드에서
+from run_pipeline import run
+run(config_dir="config", val_mode="range", val_start="2023-01-01", val_end="2023-12-01")
 ```
 
 ## Output
