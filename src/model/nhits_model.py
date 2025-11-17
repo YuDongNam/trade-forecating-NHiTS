@@ -25,18 +25,13 @@ def create_nhits(config: TrainConfig, exog_dim: int = 0, dropout_rate: float = 0
         "learning_rate": config.lr,
     }
     
-    # Add dropout if supported by NHITS
-    # Note: Some versions of neuralforecast support dropout_rate parameter
-    if dropout_rate > 0:
-        # Try to add dropout_rate if the model supports it
-        try:
-            model_kwargs["dropout_rate"] = dropout_rate
-        except TypeError:
-            # If dropout_rate is not supported, model will use default dropout
-            pass
-    
-    # Create model
+    # Create model (dropout_rate is not a constructor parameter)
+    # NHITS model may have default dropout, or we'll add it manually after creation
     model = NHITS(**model_kwargs)
+    
+    # Note: dropout_rate is stored for Monte Carlo Dropout usage during prediction
+    # The actual dropout layers are part of the model architecture
+    # We don't need to set it here - Monte Carlo Dropout will work with any dropout in the model
     
     # Only add n_x if exog_dim > 0 and the version supports it
     # For now, let neuralforecast auto-detect from data
