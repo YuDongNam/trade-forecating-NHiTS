@@ -1,0 +1,6 @@
+# Uncertainty quantification configuration
+method: "mc_dropout"      # Method for uncertainty estimation
+enabled: true             # Whether to enable uncertainty estimation
+n_samples: 100            # Number of Monte Carlo samples
+ci_level: 0.95            # Confidence interval level (0.95 = 95%)
+

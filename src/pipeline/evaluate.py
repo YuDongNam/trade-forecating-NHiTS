@@ -15,17 +15,19 @@ from ..config.yaml_loader import (
     load_validation_config,
     load_exogenous_config,
     load_targets_config,
+    load_uncertainty_config,
     TrainConfig,
     ExogenousConfig,
     ValidationConfig,
     PathsConfig,
+    UncertaintyConfig,
 )
 from ..data import load_target_df, split_train_val, scale_columns
 from ..data.feature_engineering import drop_unused_fx_columns
 from ..model import create_nhits
-from .metrics import compute_all_metrics, r2
+from .metrics import compute_all_metrics
 from .plotting import plot_forecast, plot_full_period_with_validation
-from .mc_dropout import predict_with_mc_dropout
+from .historical_forecast import historical_forecast
 
 
 def evaluate_target(
@@ -95,58 +97,27 @@ def evaluate_target(
     print("Fitting model on training data...")
     nf.fit(df=train_nf, val_size=0)
     
-    # 6) Generate predictions on validation set using Monte Carlo Dropout
-    print("Generating predictions with Monte Carlo Dropout...")
-    predictions = predict_with_mc_dropout(
-        nf=nf,
-        df=train_nf,
-        n_samples=train_config.mc_samples,
-        level=95,
-        model_name="NHITS"
-    )
+    # 6) Generate deterministic predictions on validation set
+    # (No MC Dropout during standard validation - MC Dropout is only for prediction-time uncertainty)
+    print("Generating deterministic predictions...")
+    predictions = nf.predict(df=train_nf)
     
     # Get predictions for validation period
     num_val = min(len(val_df), train_config.horizon)
     val_pred_scaled = predictions["NHITS"].values[:num_val]
-    val_lower_scaled = predictions["NHITS-lo-95"].values[:num_val] if "NHITS-lo-95" in predictions.columns else None
-    val_upper_scaled = predictions["NHITS-hi-95"].values[:num_val] if "NHITS-hi-95" in predictions.columns else None
-    
     val_actual_scaled = val_nf["y"].values[:num_val]
     
     # 7) Inverse transform
     val_pred = target_scaler.inverse_transform(val_pred_scaled.reshape(-1, 1)).flatten()
     val_actual = target_scaler.inverse_transform(val_actual_scaled.reshape(-1, 1)).flatten()
     
-    val_lower = None
-    val_upper = None
-    if val_lower_scaled is not None and val_upper_scaled is not None:
-        val_lower = target_scaler.inverse_transform(val_lower_scaled.reshape(-1, 1)).flatten()
-        val_upper = target_scaler.inverse_transform(val_upper_scaled.reshape(-1, 1)).flatten()
-    
     val_dates = val_df["ds"].values[:num_val]
     
-    # 8) Compute validation metrics
-    val_metrics = compute_all_metrics(val_actual, val_pred)
+    # 8) Compute validation metrics (RMSE, MAE, MAPE only - no R²)
+    val_metrics = compute_all_metrics(val_actual, val_pred, include_r2=False)
     print(f"Validation Metrics: RMSE={val_metrics['RMSE']:.3f}, MAE={val_metrics['MAE']:.3f}, MAPE={val_metrics['MAPE']:.3f}%")
     
-    # 9) Compute full-period R²
-    print("Computing full-period R²...")
-    # Use point predictions for R² calculation (faster)
-    full_predictions = nf.predict(df=train_nf)
-    num_pred = min(len(train_df), len(full_predictions))
-    if num_pred > 0:
-        train_pred_scaled = full_predictions["NHITS"].values[:num_pred]
-        # Align with actual values (take last num_pred values from training set)
-        train_actual_scaled = train_nf["y"].values[-num_pred:]
-        train_pred = target_scaler.inverse_transform(train_pred_scaled.reshape(-1, 1)).flatten()
-        train_actual = target_scaler.inverse_transform(train_actual_scaled.reshape(-1, 1)).flatten()
-        r2_full = r2(train_actual, train_pred)
-        print(f"Full-period R²: {r2_full:.4f}")
-    else:
-        r2_full = None
-        print("Warning: Could not compute full-period R² (no predictions available)")
-    
-    # 10) Save metrics
+    # 9) Save metrics
     result_dir = Path(paths_config.result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
     
@@ -155,26 +126,17 @@ def evaluate_target(
         json.dump(val_metrics, f, indent=2)
     print(f"Metrics saved to: {metrics_path}")
     
-    # 11) Save full-period R²
-    if r2_full is not None:
-        r2_path = result_dir / f"{target}_full_r2.json"
-        with open(r2_path, "w") as f:
-            json.dump({"target": target, "r2_full": r2_full}, f, indent=2)
-        print(f"Full-period R² saved to: {r2_path}")
-    
-    # 12) Generate plot
+    # 10) Generate plot (no confidence intervals for standard validation)
     print("Generating plot...")
     metrics_text = f"RMSE: {val_metrics['RMSE']:.3f}, MAE: {val_metrics['MAE']:.3f}, MAPE: {val_metrics['MAPE']:.3f}%"
-    if r2_full is not None:
-        metrics_text += f", R²(full): {r2_full:.4f}"
     
     plot_path = result_dir / f"{target}_forecast.png"
     plot_forecast(
         dates=pd.Series(val_dates),
         y_actual=pd.Series(val_actual),
         y_pred=pd.Series(val_pred),
-        y_lower=pd.Series(val_lower) if val_lower is not None else None,
-        y_upper=pd.Series(val_upper) if val_upper is not None else None,
+        y_lower=None,  # No CI for standard validation
+        y_upper=None,
         title=target,
         metrics_text=metrics_text,
         save_path=plot_path,
@@ -189,9 +151,6 @@ def evaluate_target(
         "y_pred": val_pred,
     })
     
-    if val_lower is not None and val_upper is not None:
-        results_df["y_pred_lower_95"] = val_lower
-        results_df["y_pred_upper_95"] = val_upper
     
     results_df["error"] = val_actual - val_pred
     results_df["abs_error"] = np.abs(val_actual - val_pred)
@@ -207,7 +166,11 @@ def evaluate_target(
     return {
         "target": target,
         "val_metrics": val_metrics,
-        "r2_full": r2_full
+        "nf": nf,
+        "train_nf": train_nf,
+        "full_df": df,
+        "target_scaler": target_scaler,
+        "exog_cols": exog_cols
     }
 
 
@@ -255,6 +218,7 @@ def main():
     validation_config = load_validation_config(config_dir)
     exog_config = load_exogenous_config(config_dir)
     targets_config = load_targets_config(config_dir)
+    uncertainty_config = load_uncertainty_config(config_dir)
     
     # Override validation config with CLI arguments if provided
     if args.val_mode:
@@ -274,7 +238,9 @@ def main():
     print("="*60)
     
     all_metrics = {}
+    all_historical_results = {}
     
+    # Step 1: Standard validation evaluation
     for target in targets_config.targets:
         try:
             result = evaluate_target(
@@ -292,24 +258,75 @@ def main():
             traceback.print_exc()
             continue
     
+    # Step 2: Historical forecast (rolling backtest) with R²
+    print("\n" + "="*80)
+    print("HISTORICAL FORECAST (ROLLING BACKTEST)")
+    print("="*80)
+    
+    for target in targets_config.targets:
+        try:
+            # Get the model and data from standard evaluation
+            eval_result = all_metrics.get(target)
+            if not eval_result:
+                print(f"Skipping historical forecast for {target} (standard evaluation failed)")
+                continue
+            
+            # Run historical forecast
+            hist_result = historical_forecast(
+                target=target,
+                train_config=train_config,
+                validation_config=validation_config,
+                uncertainty_config=uncertainty_config,
+                paths_config=paths_config,
+                nf=eval_result["nf"],
+                train_nf=eval_result["train_nf"],
+                full_df=eval_result["full_df"],
+                target_scaler=eval_result["target_scaler"],
+                exog_cols=eval_result["exog_cols"]
+            )
+            
+            if hist_result:
+                all_historical_results[target] = hist_result
+        except Exception as e:
+            print(f"Error in historical forecast for {target}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
     # Print summary table
     print("\n" + "="*80)
     print("SUMMARY OF METRICS")
     print("="*80)
-    print(f"{'Target':<20} {'RMSE':<12} {'MAE':<12} {'MAPE':<12} {'R² Full':<12}")
+    print(f"{'Target':<20} {'Val_RMSE':<12} {'Val_MAE':<12} {'Val_MAPE':<12} {'Hist_RMSE':<12} {'Hist_MAE':<12} {'Hist_MAPE':<12} {'Hist_R2':<12}")
     print("-"*80)
-    for target, result in all_metrics.items():
-        val_metrics = result.get("val_metrics", {})
-        r2_full = result.get("r2_full")
-        rmse = val_metrics.get("RMSE", "N/A")
-        mae = val_metrics.get("MAE", "N/A")
-        mape = val_metrics.get("MAPE", "N/A")
-        r2_str = f"{r2_full:.4f}" if r2_full is not None else "N/A"
+    
+    for target in targets_config.targets:
+        val_result = all_metrics.get(target, {})
+        hist_result = all_historical_results.get(target, {})
         
-        if isinstance(rmse, (int, float)):
-            print(f"{target:<20} {rmse:<12.3f} {mae:<12.3f} {mape:<12.3f} {r2_str:<12}")
+        val_metrics = val_result.get("val_metrics", {})
+        hist_metrics = hist_result.get("metrics", {})
+        
+        val_rmse = val_metrics.get("RMSE", "N/A")
+        val_mae = val_metrics.get("MAE", "N/A")
+        val_mape = val_metrics.get("MAPE", "N/A")
+        
+        hist_rmse = hist_metrics.get("rmse", "N/A")
+        hist_mae = hist_metrics.get("mae", "N/A")
+        hist_mape = hist_metrics.get("mape", "N/A")
+        hist_r2 = hist_metrics.get("r2", "N/A")
+        
+        if isinstance(val_rmse, (int, float)) and isinstance(hist_rmse, (int, float)):
+            print(f"{target:<20} {val_rmse:<12.3f} {val_mae:<12.3f} {val_mape:<12.3f} {hist_rmse:<12.3f} {hist_mae:<12.3f} {hist_mape:<12.3f} {hist_r2:<12.4f}")
         else:
-            print(f"{target:<20} {rmse:<12} {mae:<12} {mape:<12} {r2_str:<12}")
+            val_rmse_str = f"{val_rmse:.3f}" if isinstance(val_rmse, (int, float)) else str(val_rmse)
+            val_mae_str = f"{val_mae:.3f}" if isinstance(val_mae, (int, float)) else str(val_mae)
+            val_mape_str = f"{val_mape:.3f}" if isinstance(val_mape, (int, float)) else str(val_mape)
+            hist_rmse_str = f"{hist_rmse:.3f}" if isinstance(hist_rmse, (int, float)) else str(hist_rmse)
+            hist_mae_str = f"{hist_mae:.3f}" if isinstance(hist_mae, (int, float)) else str(hist_mae)
+            hist_mape_str = f"{hist_mape:.3f}" if isinstance(hist_mape, (int, float)) else str(hist_mape)
+            hist_r2_str = f"{hist_r2:.4f}" if isinstance(hist_r2, (int, float)) else str(hist_r2)
+            print(f"{target:<20} {val_rmse_str:<12} {val_mae_str:<12} {val_mape_str:<12} {hist_rmse_str:<12} {hist_mae_str:<12} {hist_mape_str:<12} {hist_r2_str:<12}")
     
     # Save summary
     summary_path = Path(paths_config.result_dir) / "summary_metrics.json"

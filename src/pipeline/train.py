@@ -23,8 +23,7 @@ from ..config.yaml_loader import (
 from ..data import load_target_df, split_train_val, scale_columns
 from ..data.feature_engineering import drop_unused_fx_columns
 from ..model import create_nhits
-from .metrics import compute_all_metrics, r2
-from .mc_dropout import predict_with_mc_dropout
+from .metrics import compute_all_metrics
 
 
 def train_target(
@@ -32,11 +31,13 @@ def train_target(
     train_config: TrainConfig,
     validation_config: ValidationConfig,
     exog_config: ExogenousConfig,
-    paths_config: PathsConfig,
-    compute_full_r2: bool = True
+    paths_config: PathsConfig
 ):
     """
     Train NHITS model for a single target.
+    
+    Training uses deterministic forward passes (no MC Dropout).
+    MC Dropout is only used at prediction time via uncertainty.py.
     
     Args:
         target: Target name (e.g., "Korea_Import")
@@ -44,10 +45,9 @@ def train_target(
         validation_config: Validation configuration
         exog_config: Exogenous configuration
         paths_config: Paths configuration
-        compute_full_r2: Whether to compute full-period R²
     
     Returns:
-        Dictionary with training results and metrics
+        Dictionary with training results and validation metrics (RMSE, MAE, MAPE only)
     """
     print(f"\n{'='*60}")
     print(f"Training model for: {target}")
@@ -105,17 +105,12 @@ def train_target(
     nf.fit(df=train_nf, val_size=val_size)
     
     # 8) Compute validation metrics if validation set exists
+    # Use deterministic predictions (no MC Dropout during validation)
     val_metrics = None
     if len(val_df) > 0:
         print("Computing validation metrics...")
-        # Generate predictions on validation set using Monte Carlo Dropout
-        predictions = predict_with_mc_dropout(
-            nf=nf,
-            df=train_nf,
-            n_samples=train_config.mc_samples,
-            level=95,
-            model_name="NHITS"
-        )
+        # Generate deterministic predictions (model in eval mode)
+        predictions = nf.predict(df=train_nf)
         
         num_val = min(len(val_df), train_config.horizon)
         val_pred_scaled = predictions["NHITS"].values[:num_val]
@@ -125,37 +120,9 @@ def train_target(
         val_pred = target_scaler.inverse_transform(val_pred_scaled.reshape(-1, 1)).flatten()
         val_actual = target_scaler.inverse_transform(val_actual_scaled.reshape(-1, 1)).flatten()
         
-        # Compute metrics
-        val_metrics = compute_all_metrics(val_actual, val_pred)
+        # Compute metrics (RMSE, MAE, MAPE only - no R²)
+        val_metrics = compute_all_metrics(val_actual, val_pred, include_r2=False)
         print(f"Validation Metrics: RMSE={val_metrics['RMSE']:.3f}, MAE={val_metrics['MAE']:.3f}, MAPE={val_metrics['MAPE']:.3f}%")
-    
-    # 9) Compute full-period R² if requested
-    r2_full = None
-    if compute_full_r2:
-        print("Computing full-period R²...")
-        # For full-period R², we use the model's fitted predictions on training data
-        # Generate predictions using the trained model on training data
-        # This gives us in-sample performance
-        # Use point predictions for R² (faster, and R² doesn't need intervals)
-        full_predictions = nf.predict(df=train_nf)
-        
-        # Use all available training predictions
-        # Note: predictions are for the forecast horizon, so we take what we can
-        num_pred = min(len(train_df), len(full_predictions))
-        if num_pred > 0:
-            train_pred_scaled = full_predictions["NHITS"].values[:num_pred]
-            # Align with actual values (take last num_pred values from training set)
-            train_actual_scaled = train_nf["y"].values[-num_pred:]
-            
-            # Inverse transform
-            train_pred = target_scaler.inverse_transform(train_pred_scaled.reshape(-1, 1)).flatten()
-            train_actual = target_scaler.inverse_transform(train_actual_scaled.reshape(-1, 1)).flatten()
-            
-            # Compute R²
-            r2_full = r2(train_actual, train_pred)
-            print(f"Full-period R²: {r2_full:.4f}")
-        else:
-            print("Warning: Could not compute full-period R² (no predictions available)")
     
     # 10) Save model checkpoint
     model_dir = Path(paths_config.model_dir) / target
@@ -176,19 +143,11 @@ def train_target(
             json.dump(val_metrics, f, indent=2)
         print(f"Validation metrics saved to: {val_metrics_path}")
     
-    # 12) Save full-period R²
-    if r2_full is not None:
-        r2_path = result_dir / f"{target}_full_r2.json"
-        with open(r2_path, "w") as f:
-            json.dump({"target": target, "r2_full": r2_full}, f, indent=2)
-        print(f"Full-period R² saved to: {r2_path}")
-    
     print(f"Model training completed. Checkpoint saved to: {model_dir}")
     
     return {
         "target": target,
-        "val_metrics": val_metrics,
-        "r2_full": r2_full
+        "val_metrics": val_metrics
     }
 
 
@@ -264,8 +223,7 @@ def main():
                 train_config,
                 validation_config,
                 exog_config,
-                paths_config,
-                compute_full_r2=True
+                paths_config
             )
             all_results.append(result)
         except Exception as e:
@@ -278,17 +236,16 @@ def main():
     print("\n" + "="*60)
     print("TRAINING SUMMARY")
     print("="*60)
-    print(f"{'Target':<20} {'Val RMSE':<12} {'Val MAE':<12} {'Val MAPE':<12} {'R² Full':<12}")
+    print(f"{'Target':<20} {'Val RMSE':<12} {'Val MAE':<12} {'Val MAPE':<12}")
     print("-"*60)
     for result in all_results:
         target = result["target"]
         val_metrics = result.get("val_metrics")
-        r2_full = result.get("r2_full")
         
         if val_metrics:
-            print(f"{target:<20} {val_metrics['RMSE']:<12.3f} {val_metrics['MAE']:<12.3f} {val_metrics['MAPE']:<12.3f} {r2_full:<12.4f if r2_full else 'N/A':<12}")
+            print(f"{target:<20} {val_metrics['RMSE']:<12.3f} {val_metrics['MAE']:<12.3f} {val_metrics['MAPE']:<12.3f}")
         else:
-            print(f"{target:<20} {'N/A':<12} {'N/A':<12} {'N/A':<12} {r2_full:<12.4f if r2_full else 'N/A':<12}")
+            print(f"{target:<20} {'N/A':<12} {'N/A':<12} {'N/A':<12}")
 
 
 if __name__ == "__main__":

@@ -126,21 +126,25 @@ def r2(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series
     return float(1 - (ss_res / ss_tot))
 
 
-def compute_all_metrics(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series]) -> dict:
+def compute_all_metrics(y_true: Union[np.ndarray, pd.Series], y_pred: Union[np.ndarray, pd.Series], include_r2: bool = False) -> dict:
     """
-    Compute all metrics: RMSE, MAE, MAPE, R².
+    Compute standard validation metrics: RMSE, MAE, MAPE.
+    Optionally include R² (only for historical_forecast evaluation).
     
     Args:
         y_true: True values
         y_pred: Predicted values
+        include_r2: Whether to include R² (default: False, only for historical_forecast)
     
     Returns:
-        Dictionary with all metrics
+        Dictionary with metrics
     """
-    return {
+    metrics = {
         "RMSE": rmse(y_true, y_pred),
         "MAE": mae(y_true, y_pred),
-        "MAPE": mape(y_true, y_pred),
-        "R2": r2(y_true, y_pred)
+        "MAPE": mape(y_true, y_pred)
     }
+    if include_r2:
+        metrics["R2"] = r2(y_true, y_pred)
+    return metrics
 

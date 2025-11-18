@@ -57,6 +57,14 @@ class ExogenousConfig:
     use_copper: bool
 
 
+@dataclass
+class UncertaintyConfig:
+    method: str  # "mc_dropout" or other methods
+    enabled: bool
+    n_samples: int
+    ci_level: float
+
+
 def load_yaml(config_path: Path) -> dict:
     """Load a YAML file."""
     with open(config_path, "r", encoding="utf-8") as f:
@@ -103,4 +111,11 @@ def load_exogenous_config(config_dir: Path = Path("config")) -> ExogenousConfig:
     config_path = config_dir / "exogenous.yaml"
     data = load_yaml(config_path)
     return ExogenousConfig(**data)
+
+
+def load_uncertainty_config(config_dir: Path = Path("config")) -> UncertaintyConfig:
+    """Load uncertainty quantification configuration."""
+    config_path = config_dir / "uncertainty.yaml"
+    data = load_yaml(config_path)
+    return UncertaintyConfig(**data)
 

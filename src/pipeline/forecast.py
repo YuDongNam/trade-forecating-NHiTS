@@ -21,7 +21,7 @@ from ..data.feature_engineering import drop_unused_fx_columns
 from ..data.preprocess import scale_columns
 from ..model import create_nhits
 from .plotting import plot_forecast
-from .mc_dropout import predict_with_mc_dropout
+from .uncertainty import mc_dropout_predict
 
 
 def forecast_target(
@@ -83,36 +83,28 @@ def forecast_target(
     print("Fitting model on full history...")
     nf.fit(df=full_nf, val_size=0)
     
-    # 5) Generate forecast using Monte Carlo Dropout
+    # 5) Generate forecast using MC Dropout (if enabled) or deterministic
+    from ..config.yaml_loader import load_uncertainty_config
+    uncertainty_config = load_uncertainty_config(Path("config"))
+    
     print(f"Generating forecast for next {train_config.horizon} months...")
-    print(f"Using Monte Carlo Dropout with {train_config.mc_samples} samples...")
-    predictions = predict_with_mc_dropout(
-        nf=nf,
-        df=full_nf,
-        n_samples=train_config.mc_samples,
-        level=95,
-        model_name="NHITS"
-    )
-    
-    # Extract forecast values
-    forecast_values = predictions["NHITS"].values
-    forecast_lower = predictions["NHITS-lo-95"].values if "NHITS-lo-95" in predictions.columns else None
-    forecast_upper = predictions["NHITS-hi-95"].values if "NHITS-hi-95" in predictions.columns else None
-    
-    # 6) Inverse transform forecast
-    forecast_inverse = target_scaler.inverse_transform(
-        forecast_values.reshape(-1, 1)
-    ).flatten()
-    
-    forecast_lower_inverse = None
-    forecast_upper_inverse = None
-    if forecast_lower is not None and forecast_upper is not None:
-        forecast_lower_inverse = target_scaler.inverse_transform(
-            forecast_lower.reshape(-1, 1)
-        ).flatten()
-        forecast_upper_inverse = target_scaler.inverse_transform(
-            forecast_upper.reshape(-1, 1)
-        ).flatten()
+    if uncertainty_config.enabled and uncertainty_config.method == "mc_dropout":
+        print(f"Using Monte Carlo Dropout with {uncertainty_config.n_samples} samples...")
+        forecast_inverse, forecast_lower_inverse, forecast_upper_inverse = mc_dropout_predict(
+            nf=nf,
+            df=full_nf,
+            n_samples=uncertainty_config.n_samples,
+            ci_level=uncertainty_config.ci_level,
+            model_name="NHITS",
+            target_scaler=target_scaler
+        )
+    else:
+        print("Using deterministic forecast...")
+        predictions = nf.predict(df=full_nf)
+        forecast_scaled = predictions["NHITS"].values if "NHITS" in predictions.columns else predictions.iloc[:, 0].values
+        forecast_inverse = target_scaler.inverse_transform(forecast_scaled.reshape(-1, 1)).flatten()
+        forecast_lower_inverse = None
+        forecast_upper_inverse = None
     
     # 7) Create forecast dataframe
     # Generate future dates

@@ -112,8 +112,7 @@ def main():
                     train_config,
                     validation_config,
                     exog_config,
-                    paths_config,
-                    compute_full_r2=True
+                    paths_config
                 )
                 all_results.append(result)
             except Exception as e:
@@ -126,15 +125,8 @@ def main():
         # Load existing metrics if available
         result_dir = Path(paths_config.result_dir)
         for target in targets_config.targets:
-            r2_path = result_dir / f"{target}_full_r2.json"
             val_metrics_path = result_dir / f"{target}_val_metrics.json"
-            r2_full = None
             val_metrics = None
-            
-            if r2_path.exists():
-                with open(r2_path, "r") as f:
-                    r2_data = json.load(f)
-                    r2_full = r2_data.get("r2_full")
             
             if val_metrics_path.exists():
                 with open(val_metrics_path, "r") as f:
@@ -142,8 +134,7 @@ def main():
             
             all_results.append({
                 "target": target,
-                "val_metrics": val_metrics,
-                "r2_full": r2_full
+                "val_metrics": val_metrics
             })
     
     # Step 2: Evaluation
@@ -194,27 +185,24 @@ def main():
     print("\n" + "="*80)
     print("FINAL SUMMARY")
     print("="*80)
-    print(f"{'Target':<20} {'RMSE':<12} {'MAE':<12} {'MAPE':<12} {'R² Full':<12}")
+    print(f"{'Target':<20} {'Val_RMSE':<12} {'Val_MAE':<12} {'Val_MAPE':<12}")
     print("-"*80)
     
     for result in all_results:
         target = result["target"]
         val_metrics = result.get("val_metrics")
-        r2_full = result.get("r2_full")
         
         if val_metrics:
             rmse = val_metrics.get("RMSE", "N/A")
             mae = val_metrics.get("MAE", "N/A")
             mape = val_metrics.get("MAPE", "N/A")
-            r2_str = f"{r2_full:.4f}" if r2_full is not None else "N/A"
             
             if isinstance(rmse, (int, float)):
-                print(f"{target:<20} {rmse:<12.3f} {mae:<12.3f} {mape:<12.3f} {r2_str:<12}")
+                print(f"{target:<20} {rmse:<12.3f} {mae:<12.3f} {mape:<12.3f}")
             else:
-                print(f"{target:<20} {rmse:<12} {mae:<12} {mape:<12} {r2_str:<12}")
+                print(f"{target:<20} {rmse:<12} {mae:<12} {mape:<12}")
         else:
-            r2_str = f"{r2_full:.4f}" if r2_full is not None else "N/A"
-            print(f"{target:<20} {'N/A':<12} {'N/A':<12} {'N/A':<12} {r2_str:<12}")
+            print(f"{target:<20} {'N/A':<12} {'N/A':<12} {'N/A':<12}")
     
     print("\n" + "="*80)
     print("Pipeline completed successfully!")

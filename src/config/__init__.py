@@ -11,12 +11,14 @@ from .yaml_loader import (
     PathsConfig,
     ModelNHITSConfig,
     TargetsConfig,
+    UncertaintyConfig,
     load_paths_config,
     load_train_config,
     load_validation_config,
     load_exogenous_config,
     load_targets_config,
     load_model_config,
+    load_uncertainty_config,
 )
 
 __all__ = [
@@ -34,11 +36,13 @@ __all__ = [
     "PathsConfig",
     "ModelNHITSConfig",
     "TargetsConfig",
+    "UncertaintyConfig",
     "load_paths_config",
     "load_train_config",
     "load_validation_config",
     "load_exogenous_config",
     "load_targets_config",
     "load_model_config",
+    "load_uncertainty_config",
 ]
 
