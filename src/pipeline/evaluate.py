@@ -78,6 +78,9 @@ def evaluate_target(
         train_df, val_df, target_col="y", exog_cols=exog_cols
     )
     
+    # Store exog_scaler for historical_forecast
+    exog_scaler_stored = exog_scaler
+    
     # 4) Prepare data for NeuralForecast
     train_nf = train_df_scaled.copy()
     train_nf["unique_id"] = target
@@ -126,19 +129,30 @@ def evaluate_target(
         json.dump(val_metrics, f, indent=2)
     print(f"Metrics saved to: {metrics_path}")
     
-    # 10) Generate plot (no confidence intervals for standard validation)
+    # 10) Generate plot with full period (2010-2024) and validation period highlighted
     print("Generating plot...")
     metrics_text = f"RMSE: {val_metrics['RMSE']:.3f}, MAE: {val_metrics['MAE']:.3f}, MAPE: {val_metrics['MAPE']:.3f}%"
     
+    # Prepare full period data
+    full_dates = pd.Series(df["ds"].values)
+    full_actual = pd.Series(df["y"].values)
+    
+    # Determine validation period dates
+    val_start_date = pd.to_datetime(val_dates[0]) if len(val_dates) > 0 else None
+    val_end_date = pd.to_datetime(val_dates[-1]) if len(val_dates) > 0 else None
+    
     plot_path = result_dir / f"{target}_forecast.png"
-    plot_forecast(
-        dates=pd.Series(val_dates),
-        y_actual=pd.Series(val_actual),
-        y_pred=pd.Series(val_pred),
-        y_lower=None,  # No CI for standard validation
-        y_upper=None,
-        title=target,
+    plot_full_period_with_validation(
+        full_dates=full_dates,
+        full_actual=full_actual,
+        val_dates=pd.Series(val_dates),
+        val_pred=pd.Series(val_pred),
+        val_lower=None,  # No CI for standard validation
+        val_upper=None,
+        target_name=target,
         metrics_text=metrics_text,
+        val_start_date=val_start_date,
+        val_end_date=val_end_date,
         save_path=plot_path,
         show=False
     )
@@ -170,6 +184,7 @@ def evaluate_target(
         "train_nf": train_nf,
         "full_df": df,
         "target_scaler": target_scaler,
+        "exog_scaler": exog_scaler_stored,
         "exog_cols": exog_cols
     }
 
@@ -282,6 +297,7 @@ def main():
                 train_nf=eval_result["train_nf"],
                 full_df=eval_result["full_df"],
                 target_scaler=eval_result["target_scaler"],
+                exog_scaler=eval_result.get("exog_scaler"),
                 exog_cols=eval_result["exog_cols"]
             )
             

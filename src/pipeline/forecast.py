@@ -115,21 +115,29 @@ def forecast_target(
         freq="M"
     )
     
+    # Create forecast dataframe with confidence intervals
     forecast_df = pd.DataFrame({
         "ds": future_dates,
         "y": [np.nan] * len(future_dates),  # Unknown future values
         "y_hat": forecast_inverse
     })
     
+    # Always include confidence interval columns (even if None/NaN)
     if forecast_lower_inverse is not None and forecast_upper_inverse is not None:
         forecast_df["y_hat_lower_95"] = forecast_lower_inverse
         forecast_df["y_hat_upper_95"] = forecast_upper_inverse
+    else:
+        # If MC Dropout is disabled or failed, fill with NaN
+        forecast_df["y_hat_lower_95"] = [np.nan] * len(future_dates)
+        forecast_df["y_hat_upper_95"] = [np.nan] * len(future_dates)
     
     # Combine with historical data
     historical_df = pd.DataFrame({
         "ds": df["ds"],
         "y": df["y"],
-        "y_hat": [np.nan] * len(df)  # No predictions for history in this context
+        "y_hat": [np.nan] * len(df),  # No predictions for history in this context
+        "y_hat_lower_95": [np.nan] * len(df),  # No CI for history
+        "y_hat_upper_95": [np.nan] * len(df)   # No CI for history
     })
     
     result_df = pd.concat([historical_df, forecast_df], ignore_index=True)

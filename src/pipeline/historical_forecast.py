@@ -32,6 +32,7 @@ def historical_forecast(
     train_nf: pd.DataFrame,
     full_df: pd.DataFrame,
     target_scaler,
+    exog_scaler,
     exog_cols: list
 ) -> dict:
     """
@@ -54,6 +55,7 @@ def historical_forecast(
         train_nf: Training data in NeuralForecast format (scaled)
         full_df: Full dataset (unscaled, for getting actual values)
         target_scaler: Scaler for inverse transformation
+        exog_scaler: Scaler for exogenous variables
         exog_cols: List of exogenous column names
     
     Returns:
@@ -101,10 +103,9 @@ def historical_forecast(
     full_df_scaled = full_df.copy()
     # We'll use the scaler that was fitted on training data
     full_df_scaled["y"] = target_scaler.transform(full_df[["y"]]).flatten()
-    if exog_cols:
-        # Note: exog_scaler should be passed separately, but for simplicity
-        # we assume exog_cols are already scaled in train_nf format
-        pass
+    if exog_cols and exog_scaler is not None:
+        # Scale exogenous variables
+        full_df_scaled[exog_cols] = exog_scaler.transform(full_df[exog_cols])
     
     # Create full NeuralForecast format dataframe
     full_nf = full_df_scaled.copy()
@@ -171,8 +172,15 @@ def historical_forecast(
     # 3) Convert to arrays
     y_hat_array = np.array(all_forecasts)
     y_actual_array = np.array(all_actuals)
-    y_lower_array = np.array(all_lower) if all_lower else None
-    y_upper_array = np.array(all_upper) if all_upper else None
+    # Convert lists to arrays, handling empty lists
+    if len(all_lower) > 0:
+        y_lower_array = np.array(all_lower)
+    else:
+        y_lower_array = None
+    if len(all_upper) > 0:
+        y_upper_array = np.array(all_upper)
+    else:
+        y_upper_array = None
     
     # Remove NaN values for metric computation
     valid_mask = ~(np.isnan(y_hat_array) | np.isnan(y_actual_array))
@@ -195,13 +203,13 @@ def historical_forecast(
     result_dir = Path(paths_config.result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save CSV
+    # Save CSV - always include confidence interval columns
     results_df = pd.DataFrame({
         "ds": all_dates,
         "y": y_actual_array,
         "y_hat": y_hat_array,
-        "y_hat_lower": y_lower_array if y_lower_array is not None else [np.nan] * len(all_dates),
-        "y_hat_upper": y_upper_array if y_upper_array is not None else [np.nan] * len(all_dates),
+        "y_hat_lower": y_lower_array if y_lower_array is not None and not np.all(np.isnan(y_lower_array)) else [np.nan] * len(all_dates),
+        "y_hat_upper": y_upper_array if y_upper_array is not None and not np.all(np.isnan(y_upper_array)) else [np.nan] * len(all_dates),
         "error": y_actual_array - y_hat_array,
         "abs_error": np.abs(y_actual_array - y_hat_array)
     })
@@ -224,19 +232,31 @@ def historical_forecast(
         json.dump(metrics_dict, f, indent=2)
     print(f"Historical forecast metrics saved to: {metrics_path}")
     
-    # 6) Generate plot
+    # 6) Generate plot with full period (2010-2024) and validation period highlighted
     print("Generating historical forecast plot...")
     metrics_text = f"RMSE: {metrics['RMSE']:.3f}, MAE: {metrics['MAE']:.3f}, MAPE: {metrics['MAPE']:.3f}%, R²(historical): {metrics['R2']:.4f}"
     
+    # Prepare full period data
+    full_dates = pd.Series(full_df["ds"].values)
+    full_actual = pd.Series(full_df["y"].values)
+    
+    # Determine validation period dates
+    val_start_date = pd.to_datetime(all_dates[0]) if len(all_dates) > 0 else None
+    val_end_date = pd.to_datetime(all_dates[-1]) if len(all_dates) > 0 else None
+    
     plot_path = result_dir / f"{target}_historical_forecast.png"
-    plot_forecast(
-        dates=pd.Series(all_dates),
-        y_actual=pd.Series(y_actual_array),
-        y_pred=pd.Series(y_hat_array),
-        y_lower=pd.Series(y_lower_array) if y_lower_array is not None else None,
-        y_upper=pd.Series(y_upper_array) if y_upper_array is not None else None,
-        title=f"{target} - Historical Forecast (Rolling Backtest)",
+    from .plotting import plot_full_period_with_validation
+    plot_full_period_with_validation(
+        full_dates=full_dates,
+        full_actual=full_actual,
+        val_dates=pd.Series(all_dates),
+        val_pred=pd.Series(y_hat_array),
+        val_lower=pd.Series(y_lower_array) if y_lower_array is not None else None,
+        val_upper=pd.Series(y_upper_array) if y_upper_array is not None else None,
+        target_name=f"{target} - Historical Forecast (Rolling Backtest)",
         metrics_text=metrics_text,
+        val_start_date=val_start_date,
+        val_end_date=val_end_date,
         save_path=plot_path,
         show=False
     )
